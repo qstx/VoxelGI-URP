@@ -39,7 +39,7 @@
 - **3D 体素化**：Geometry Shader 三轴投影 + 保守光栅化 + InterlockedMax 原子写入
 - **直接光照**：Compute Shader 计算体素空间的太阳光直射与阴影
 - **间接光照**：Fibonacci 球面分布 + 半球 Cone Tracing，支持二次反弹
-- **屏幕空间 Cone Tracing**：黄金比例低差异序列 + 蓝噪声抖动
+- **屏幕空间 Cone Tracing**：低差异序列（黄金比例/Halton 可选）+ 蓝噪声抖动
 - **降噪**：Motion Vector 重投影时域滤波 + Poisson Disk 双边滤波
 - **可视化 Box**：`VoxelGIVolume` 组件定义体素化区域，支持 Gizmos 线框预览
 - **调试模式**：Ray Marching 可视化各中间通道（Albedo/Normal/Emissive/Lighting 等）
@@ -116,16 +116,24 @@ Assets/VXGI/
 ### ConeTracing（屏幕追踪）
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
+| ConeTraceQuality | High | 质量档位（VeryLow=1, Low=2, Mid=4, High=8） |
 | ScreenMaxStepNum | 32 | 最大步进 |
+| ScreenAlphaAtten | 5.0 | Alpha 衰减 |
 | ScreenScale | 1.0 | 强度缩放 |
+| ScreenFirstStep | 0.9 | 首步长度 |
+| ScreenStepScale | 1.2 | 步长递增 |
 | ScreenConeAngle | 120° | 锥体角度 |
 
 ### TemporalFilter（时域滤波）
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | EnableTemporalFilter | true | 开关 |
+| BlueNoiseLUT | - | 蓝噪声纹理 |
+| JitterMode | GoldenRatio | 抖动序列模式（GoldenRatio/Halton） |
 | TemporalBlendAlpha | 0.005 | 混合权重 |
 | ClampAABBScale | 1.2 | 颜色钳制范围 |
+| BlueNoiseScale | (1,1) | 蓝噪声缩放 |
+| HaltonValueCount | 8 | Halton 序列长度（仅 Halton 模式） |
 
 ### BilateralFilter（双边滤波）
 | 参数 | 默认值 | 说明 |
@@ -133,6 +141,9 @@ Assets/VXGI/
 | EnableBilateralFilter | true | 开关 |
 | BilateralSamplerRadius | 6.0 | 采样半径 |
 | DepthThresholdLowerBound | 0.1 | 深度阈值下界 |
+| DepthThresholdUpperBound | 0.2 | 深度阈值上界 |
+| NormalThresholdLowerBound | 0.7 | 法线阈值下界 |
+| NormalThresholdUpperBound | 1.0 | 法线阈值上界 |
 
 ## 重要注意事项
 

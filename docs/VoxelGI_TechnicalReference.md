@@ -170,7 +170,7 @@ Assets/VXGI/
 | **Shader Pass** | GiMaterial pass index **2**（Name: "ConeTracing"） |
 | **ConfigureInput** | `ScriptableRenderPassInput.Depth \| ScriptableRenderPassInput.Normal` |
 | **算法** | 从屏幕像素重建世界坐标，沿法线方向在 3D 光照纹理中 Cone Tracing 采样 |
-| **抖动** | 黄金比例低差异序列 + 蓝噪声，配合 Temporal Filter 使用 |
+| **抖动** | 低差异序列（黄金比例/Halton 可选）+ 蓝噪声，配合 Temporal Filter 使用 |
 
 **注意**: URP 14 中 DepthNormals prepass 生成的纹理名为 `_CameraNormalsTexture`（R8G8B8A8_SNorm，view space 法线直接存储），**不是** Built-in 管线的 `_CameraDepthNormalsTexture`。
 
@@ -313,7 +313,7 @@ Assets/VXGI/
 ### ConeTracingConfig
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| BlueNoiseLUT | - | 蓝噪声纹理 |
+| ConeTraceQuality | High | 屏幕Cone质量档位（VeryLow=1, Low=2, Mid=4, High=8） |
 | ScreenMaxStepNum | 32 | 屏幕最大步进 |
 | ScreenAlphaAtten | 5f | Alpha 衰减 |
 | ScreenScale | 1f | 缩放 |
@@ -325,10 +325,12 @@ Assets/VXGI/
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
 | EnableTemporalFilter | true | 开关 |
+| BlueNoiseLUT | - | 蓝噪声纹理 |
+| JitterMode | GoldenRatio | 抖动序列模式（GoldenRatio/Halton） |
 | TemporalBlendAlpha | 0.005f | 混合权重 |
 | ClampAABBScale | 1.2f | AABB 钳制缩放 |
 | BlueNoiseScale | (1,1) | 蓝噪声缩放 |
-| HaltonValueCount | 8 | Halton 序列长度 |
+| HaltonValueCount | 8 [2,64] | Halton 序列长度（仅 JitterMode=Halton 时生效） |
 
 ### BilateralFilterConfig
 | 字段 | 默认值 | 说明 |
@@ -345,7 +347,8 @@ Assets/VXGI/
 |------|------|
 | DebugMode | 调试开关 |
 | DebugType | 枚举：Albedo/Normal/Emissive/Lighting/IndirectLighting/ConeTrace/TemporalFilter/BilateralFilter |
-| DirectLightingDebugMipLevel | 调试用 Mip 级别 |
+| DirectLightingDebugMipLevel | 直接光调试用 Mip 级别 |
+| IndirectLightingDebugMipLevel | 间接光调试用 Mip 级别 |
 | RayStepSize | Ray Marching 步长 |
 
 ---
@@ -395,7 +398,7 @@ Assets/VXGI/
 - `transform.position` = 体素化区域中心
 - `transform.lossyScale` = 体素化区域 xyz 尺寸（支持长方体）
 - 提供 Gizmos 可视化（绿色体素区域线框 + 黄色阴影相机视锥体）
-- VoxelSize = min(scale.x, scale.y, scale.z) / VoxelTextureResolution
+- VoxelSize = max(scale.x, scale.y, scale.z) / VoxelTextureResolution
 
 ---
 
@@ -406,7 +409,7 @@ Assets/VXGI/
 3. **UAV 写入**: 体素化使用 `SetRandomWriteTarget` 绑定 3D 纹理到 u1~u4，通过 `InterlockedMax` 原子操作写入。
 4. **SRP DrawRenderers**: 体素化阶段使用 `context.DrawRenderers` 配合 `ShaderTagId("VoxelGI_Voxelization")`，物体使用自身材质的对应 Pass，无需 overrideMaterial。
 5. **体素阴影绘制**: ShadowMap 阶段使用 `ShaderTagId("VoxelGI_Shadow")` 绘制物体自身材质的体素阴影 Pass；`Hidden/VoxelGI_URP` 中旧 `VoxelShadow` 仅保留空壳以稳定索引。
-6. **Blocker 语义**: `VXGIBlocker.shader` 采用双 Pass：`UniversalForward` 的不可见 Pass（`ColorMask 0`）+ `VoxelGI_Shadow` 阴影 Pass，实现“只遮挡，不注入体素”。
+6. **Blocker 语义**: `VXGIBlocker.shader` 采用双 Pass：`UniversalForward` 的不可见 Pass（`ColorMask 0`）+ `VoxelGI_Shadow` 阴影 Pass，实现"只遮挡，不注入体素"。
 7. **Mipmap 生成**: 使用 Compute Shader 手动生成 3D 纹理 Mip Chain（Unity 不支持 3D 纹理自动生成 Mipmap）。
 8. **Temporal History**: 每个相机维护独立的时间滤波历史（通过 `GetOrCreateTemporalHistory`）。
 9. **GBuffer A 通道语义**: `MovingAverage` 过程中的 `w` 用作融合权重，最终业务值通过 `OverwriteGBufferAlpha` 回填到 `UavAlbedo.a`（Opacity）和 `UavNormal.a`（EmissiveIntensity）。
