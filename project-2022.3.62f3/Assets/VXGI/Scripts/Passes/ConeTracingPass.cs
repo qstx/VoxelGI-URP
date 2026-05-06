@@ -104,14 +104,24 @@ public class ConeTracingPass : ScriptableRenderPass
             new Vector4(tCfg.BlueNoiseScale.x, tCfg.BlueNoiseScale.y,
                 1f / tCfg.BlueNoiseScale.x, 1f / tCfg.BlueNoiseScale.y));
 
-        var history = m_Feature.GetOrCreateTemporalHistory(camera);
-        
         // 使用黄金比例（1.61803398875... 的小数部分）生成无尽低差异序列，替代容易产生共振的 Halton 循环
-        const float goldenRatioConjugate = 0.618033988749895f;
-        float jitterX = (history.RandomOffsetIndex * goldenRatioConjugate) % 1.0f;
-        float jitterY = (history.RandomOffsetIndex * goldenRatioConjugate * goldenRatioConjugate) % 1.0f;
-        
-        history.RandomOffsetIndex = (history.RandomOffsetIndex + 1) % 10000; // 足够大的循环，避免溢出即可
+        const float GoldenRatioConjugate = 0.618033988749895f;
+
+        var history = m_Feature.GetOrCreateTemporalHistory(camera);
+        float jitterX, jitterY;
+
+        if (tCfg.JitterMode == VoxelGIRendererFeature.JitterMode.Halton)
+        {
+            jitterX = GetHaltonValue(history.ConeTraceCount, 2);
+            jitterY = GetHaltonValue(history.ConeTraceCount, 3);
+        }
+        else
+        {
+            jitterX = (history.RandomOffsetIndex * GoldenRatioConjugate) % 1.0f;
+            jitterY = (history.RandomOffsetIndex * GoldenRatioConjugate * GoldenRatioConjugate) % 1.0f;
+        }
+
+        history.RandomOffsetIndex = (history.RandomOffsetIndex + 1) % 10000;
         history.ConeTraceCount = (history.ConeTraceCount + 1) % Mathf.Max(1, tCfg.HaltonValueCount);
         
         cmd.SetGlobalVector(ShaderIDs.RandomUV, new Vector4(jitterX, jitterY, 0, 0));

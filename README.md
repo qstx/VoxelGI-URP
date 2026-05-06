@@ -16,6 +16,16 @@
 |:---:|:---:|
 | ![NoVXGI](docs/img/vxgi_off.png) | ![VXGI](docs/img/vxgi_on.png) |
 
+## 管线中间结果
+
+| Albedo | Normal | Emissive |
+|:---:|:---:|:---:|
+| ![Albedo](docs/img/3d-gbuffer-albedo.png) | ![Normal](docs/img/3d-gbuffer-normal.png) | ![Emissive](docs/img/3d-gbuffer-emissive.png) |
+
+| 直接光照 | 间接光照 | ConeTracing + 滤波 |
+|:---:|:---:|:---:|
+| ![DirectLight](docs/img/3d-gbuffer-directlight.png) | ![IndirectLight](docs/img/3d-gbuffer-indirectlight.png) | ![ConeTracing+Filter](docs/img/3d-gbuffer-conetracing+filter.png) |
+
 ## 管线概览
 
 ```
@@ -29,7 +39,7 @@
 - **3D 体素化**：Geometry Shader 三轴投影 + 保守光栅化 + InterlockedMax 原子写入
 - **直接光照**：Compute Shader 计算体素空间的太阳光直射与阴影
 - **间接光照**：Fibonacci 球面分布 + 半球 Cone Tracing，支持二次反弹
-- **屏幕空间 Cone Tracing**：Halton 序列 + 蓝噪声抖动
+- **屏幕空间 Cone Tracing**：黄金比例低差异序列 + 蓝噪声抖动
 - **降噪**：Motion Vector 重投影时域滤波 + Poisson Disk 双边滤波
 - **可视化 Box**：`VoxelGIVolume` 组件定义体素化区域，支持 Gizmos 线框预览
 - **调试模式**：Ray Marching 可视化各中间通道（Albedo/Normal/Emissive/Lighting 等）
@@ -52,6 +62,8 @@
 3. 场景物体使用 `VoxelGI/Lit` 材质（或确保材质包含 `VoxelGI_Voxelization` 和 `VoxelGI_Shadow` Pass）
 4. 场景中放置一个 `VoxelGIVolume` 组件，调整其 Transform 来定义体素化区域
 5. 配置各项参数（详见下文）
+
+![gizmos](docs/img/voxel_area_gizmos.png)
 
 ## 项目结构
 

@@ -70,6 +70,12 @@ public class VoxelGIRendererFeature : ScriptableRendererFeature
         [Range(20f, 150f)] public float ScreenConeAngle = 120f;
     }
 
+    public enum JitterMode
+    {
+        GoldenRatio = 0,
+        Halton = 1
+    }
+
     [Serializable]
     public class TemporalFilterConfig
     {
@@ -78,7 +84,8 @@ public class VoxelGIRendererFeature : ScriptableRendererFeature
         [Range(0f, 1f)] public float TemporalBlendAlpha = 0.005f;
         public float ClampAABBScale = 1.2f;
         public Vector2 BlueNoiseScale = new Vector2(1, 1);
-        public int HaltonValueCount = 8;
+        public JitterMode JitterMode = JitterMode.GoldenRatio;
+        [Range(2, 64)] public int HaltonValueCount = 8;
     }
 
     [Serializable]

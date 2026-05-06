@@ -119,6 +119,7 @@ MonoBehaviour:
     TemporalBlendAlpha: 0.5
     ClampAABBScale: 1
     BlueNoiseScale: {x: 1, y: 1}
+    JitterMode: 0
     HaltonValueCount: 4
   BilateralFilterCfg:
     EnableBilateralFilter: 1

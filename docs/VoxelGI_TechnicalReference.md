@@ -170,7 +170,7 @@ Assets/VXGI/
 | **Shader Pass** | GiMaterial pass index **2**（Name: "ConeTracing"） |
 | **ConfigureInput** | `ScriptableRenderPassInput.Depth \| ScriptableRenderPassInput.Normal` |
 | **算法** | 从屏幕像素重建世界坐标，沿法线方向在 3D 光照纹理中 Cone Tracing 采样 |
-| **抖动** | Halton 序列 + 蓝噪声，配合 Temporal Filter 使用 |
+| **抖动** | 黄金比例低差异序列 + 蓝噪声，配合 Temporal Filter 使用 |
 
 **注意**: URP 14 中 DepthNormals prepass 生成的纹理名为 `_CameraNormalsTexture`（R8G8B8A8_SNorm，view space 法线直接存储），**不是** Built-in 管线的 `_CameraDepthNormalsTexture`。
 

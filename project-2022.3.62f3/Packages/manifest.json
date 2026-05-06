@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "com.unity.ide.rider": "3.0.40",
     "com.unity.postprocessing": "3.4.0",
     "com.unity.recorder": "4.0.3",
     "com.unity.render-pipelines.universal": "14.0.12",
