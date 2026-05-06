@@ -4,6 +4,12 @@
 
 原始项目：[BonheurTing/VoxelGI (Built-in)](https://github.com/BonheurTing/VoxelGI) — 迁移至 URP 并以 RendererFeature 形式实现。
 
+> 花了大约劳动节四天，把我几个订阅的Token都烧得差不多了。  
+> 使用模型：  
+> DeepSeek-V4-Pro（前期迁移计划，第一版URP代码）  
+> Opus-4.6（修复核心代码，使管线可以基本运行起来）  
+> GPT-5.3-Codex, Gemini-3-Pro （后期修复，性能优化）  
+
 ## 效果展示
 
 | 关闭 VoxelGI | 开启 VoxelGI |
@@ -31,13 +37,15 @@
 
 ## 性能优化
 
-- 管线耗时从最初的0.2ms减少到0.09ms
-- 体素化阶段：`DrawRenderers` 兼容 SRP Batcher
+- **管线耗时从最初的 `0.2ms` 减少到 `0.09ms`**
+- 体素化阶段使用 `DrawRenderers` 兼容 SRP Batcher，替代旧代码的手动遍历绘制物体
 - 3D GBuffer 从 4 张收敛为 2 张主纹理，光照阶段每次采样减少 2 次 3D 纹理读取
 - ShadowMap 视锥体范围根据体素区域自动优化
 - Cone Tracing 阶段无限远像素 Early-Out，预计算最长射线距离
 
 ## 快速开始
+
+> 可以直接打开搭建好的测试场景：Assets\Scenes\SampleScene.unity 
 
 1. 将 `Assets/VXGI/` 文件夹放入你的 URP 项目
 2. 在 URP Renderer 的 `Renderer Features` 中添加 `VoxelGIRendererFeature`
