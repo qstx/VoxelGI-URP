@@ -1,0 +1,655 @@
+// Each #kernel tells which function to compile; you can have many kernels
+
+// 不再依赖UnityCG.cginc，改为URP兼容的纯HLSL实现
+// #include "UnityCG.cginc"
+
+#pragma enable_d3d11_debug_symbols
+#pragma kernel VoxelDirectLighting
+#pragma kernel MipmapGeneration
+#pragma kernel CopyTexture3D
+#pragma kernel VoxelIndirectLighting
+#pragma kernel BilateralFiltering
+#pragma kernel OverwriteGBufferAlpha
+#pragma multi_compile_local __ INDIRECT_CONE_TRACE_LOW INDIRECT_CONE_TRACE_MID INDIRECT_CONE_TRACE_HIGH
+
+#define ENABLE_SHADOW_SUN_BIAS 1
+#define ENABLE_SHADOW_NORMAL_BIAS 1
+
+// Unity全局内置变量（URP自动设置）
+float4x4 UNITY_MATRIX_V;
+float4 _ZBufferParams;
+
+Texture3D<uint> RWAlbedo;
+Texture3D<uint> RWNormal;
+// 方案A：将Opacity并入Albedo.a，Emissive强度并入Normal.a，保留旧声明注释便于回退
+// Texture3D<uint> RWEmissive;
+// Texture3D<uint> RWOpacity;
+
+Texture2D<float4> ShadowDepth;
+SamplerState sampler_ShadowDepth;
+
+float4x4 VoxelToWorld;
+float4x4 WorldToVoxel;
+float VoxelTextureResolution;
+float VoxelSize;
+
+//********************************************************************************************************************************************************************
+// Util.
+//********************************************************************************************************************************************************************
+
+uint EncodeGbuffer(float4 value)
+{
+	uint res = (uint(value.x * 255.f) << 24) + (uint(value.y * 255.f) << 16)
+		+ (uint(value.z * 255.f) << 8) + uint(value.w * 255.f);
+	return res;
+}
+
+float4 DecodeGbuffer(uint value)
+{
+	float4 res = float4(0.f, 0.f, 0.f, 0.f);
+	res.w = (value & 255) / 255.f;
+	value = value >> 8;
+	res.z = (value & 255) / 255.f;
+	value = value >> 8;
+	res.y = (value & 255) / 255.f;
+	value = value >> 8;
+	res.x = (value & 255) / 255.f;
+	return res;
+}
+
+float3x3 GetTangentBasis(float3 TangentZ)
+{
+	float3 UpVector = abs(TangentZ.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0);
+	float3 TangentX = normalize(cross(UpVector, TangentZ));
+	float3 TangentY = cross(TangentZ, TangentX);
+	return float3x3(TangentX, TangentY, TangentZ);
+}
+
+float DecodeScalarFromUint16(uint value)
+{
+	return value / 65535.0f;
+}
+
+RWTexture3D<uint> PackedAlbedoTex;
+RWTexture3D<uint> PackedNormalTex;
+Texture3D<uint> TmpOpacityAccum;
+Texture3D<uint> TmpEmissiveAccum;
+
+[numthreads(8, 8, 8)]
+void OverwriteGBufferAlpha(uint3 id : SV_DispatchThreadID)
+{
+	uint voxelRes = (uint)VoxelTextureResolution;
+	if (any(id >= voxelRes))
+	{
+		return;
+	}
+
+	float4 albedoPacked = DecodeGbuffer(PackedAlbedoTex[id.xyz]);
+	float4 normalPacked = DecodeGbuffer(PackedNormalTex[id.xyz]);
+	float opacity = DecodeScalarFromUint16(TmpOpacityAccum[id.xyz]);
+	float emissivePacked = DecodeScalarFromUint16(TmpEmissiveAccum[id.xyz]);
+	albedoPacked.w = saturate(opacity);
+	normalPacked.w = saturate(emissivePacked);
+	PackedAlbedoTex[id.xyz] = EncodeGbuffer(albedoPacked);
+	PackedNormalTex[id.xyz] = EncodeGbuffer(normalPacked);
+}
+
+static float3 Fibonacci_Lattice_Hemisphere_1[1] =
+{
+	float3(0.0, 0.0, 1.0)
+};
+
+static float3 Fibonacci_Lattice_Hemisphere_4[4] =
+{
+	float3(-0.731585503467728, -0.670192249370187, 0.125),
+	float3(0.0810458159223954, 0.923475270768781, 0.375),
+	float3(0.474962433620099, -0.619504387918014, 0.625),
+	float3(-0.476722366176565, 0.0843254741286256, 0.875),
+};
+
+static float3 Fibonacci_Lattice_Hemisphere_8[8] =
+{
+	float3(-0.735927295315164, -0.674169686362497, 0.0625),
+	float3(0.0858751947674414, 0.978503551819642, 0.1875),
+	float3(0.577966879673501, -0.75385544768243, 0.3125),
+	float3(-0.885472495182538, 0.156627616578975, 0.4375),
+	float3(0.697614586708622, 0.443765296537886, 0.5625),
+	float3(-0.188520590528854, -0.701287200044783, 0.6875),
+	float3(-0.26869090798331, 0.517347993102423, 0.8125),
+	float3(0.326869977432545, -0.119372391503427, 0.9375),
+};
+
+static float3 Fibonacci_Lattice_Hemisphere_16[16] =
+{
+	float3(-0.737008746736654, -0.675160384452218, 0.03125),
+	float3(0.0870406817287227, 0.991783674610648, 0.09375),
+	float3(0.600965734598756, -0.783853381276229, 0.15625),
+	float3(-0.960864647623557, 0.169963426793115, 0.21875),
+	float3(0.80969671855586, 0.515062774290544, 0.28125),
+	float3(-0.243784330107323, -0.906865556680881, 0.34375),
+	float3(-0.421159310808654, 0.810916624825992, 0.40625),
+	float3(0.829731504061828, -0.303016614507021, 0.46875),
+	float3(-0.783119519232434, -0.323260353426092, 0.53125),
+	float3(0.341047499504824, 0.72879869688516, 0.59375),
+	float3(0.225822703319255, -0.71995836279995, 0.65625),
+	float3(-0.601554193574072, 0.34861295112696, 0.71875),
+	float3(0.609658853079947, 0.134031788622115, 0.78125),
+	float3(-0.308692885622987, -0.43908386427396, 0.84375),
+	float3(-0.0543268871447994, 0.419236838592646, 0.90625),
+	float3(0.189662913959254, -0.159848104675922, 0.96875),
+};
+
+static float Gauss_Kernel_2[2] =
+{
+	0.451863,
+	0.274069
+};
+
+static float Gauss_Kernel_3[3] =
+{
+	0.317181,
+	0.198238,
+	0.114537
+};
+
+static float Gauss_Kernel_4[4] =
+{
+	0.216106,
+	0.190713,
+	0.131075,
+	0.070159
+};
+
+static int2 PoissonStartAndEnd[] =
+{
+int2(0,  1),
+int2(1,  3),
+int2(3,  7),
+int2(7, 15),
+int2(15, 31),
+int2(31, 63),
+};
+
+static const float2 PoissonDisk[] =
+{
+float2(0.402211,  0.126575),
+float2(0.297056,  0.616830),
+float2(0.298156, -0.001704),
+float2(0.019369,  0.395482),
+float2(-0.066918, -0.367739),
+float2(-0.955010,  0.372377),
+float2(0.800057,  0.120602),
+float2(-0.7494944, 0.1827986),
+float2(-0.8572887, -0.4169083),
+float2(-0.1087135, -0.05238153),
+float2(0.1045462, 0.9657645),
+float2(-0.0135659, -0.698451),
+float2(-0.4942278, 0.7898396),
+float2(0.7970678, -0.4682421),
+float2(0.8084122, 0.533884),
+float2(0.4036454, -0.793536),
+float2(0.3826454, -0.2730118),
+float2(-0.04124885, -0.5971786),
+float2(-0.3709261, -0.9179904),
+float2(-0.3795351, -0.3353493),
+float2(-0.3154466, 0.1069074),
+float2(-0.7671808, -0.6143452),
+float2(-0.4865215, 0.6395131),
+float2(0.2359872, 0.1510548),
+float2(0.03092861, 0.7309022),
+float2(-0.82846, -0.1055831),
+float2(-0.8732378, 0.3034171),
+float2(0.9268684, -0.116035),
+float2(0.6980102, 0.3764873),
+float2(0.8239923, -0.515003),
+float2(0.5084407, 0.7533528),
+float2(-0.975402, -0.0711386),
+float2(-0.920347, -0.41142),
+float2(-0.883908, 0.217872),
+float2(-0.884518, 0.568041),
+float2(-0.811945, 0.90521),
+float2(-0.792474, -0.779962),
+float2(-0.614856, 0.386578),
+float2(-0.580859, -0.208777),
+float2(-0.53795, 0.716666),
+float2(-0.515427, 0.0899991),
+float2(-0.454634, -0.707938),
+float2(-0.420942, 0.991272),
+float2(-0.261147, 0.588488),
+float2(-0.211219, 0.114841),
+float2(-0.146336, -0.259194),
+float2(-0.139439, -0.888668),
+float2(0.0116886, 0.326395),
+float2(0.0380566, 0.625477),
+float2(0.0625935, -0.50853),
+float2(0.125584, 0.0469069),
+float2(0.169469, -0.997253),
+float2(0.320597, 0.291055),
+float2(0.359172, -0.633717),
+float2(0.435713, -0.250832),
+float2(0.507797, -0.916562),
+float2(0.545763, 0.730216),
+float2(0.56859, 0.11655),
+float2(0.743156, -0.505173),
+float2(0.736442, -0.189734),
+float2(0.843562, 0.357036),
+float2(0.865413, 0.763726),
+float2(0.872005, -0.927)
+};
+
+//********************************************************************************************************************************************************************
+// Generate Mipmap.
+//********************************************************************************************************************************************************************
+
+uint DstRes;
+uint SrcMipLevel;
+Texture3D<float4> MipmapSrc;
+RWTexture3D<float4> MipmapDst;
+uint MipmapDimension; // x: 0, y: 1, z: 2
+#define MIPMAP_THREAD_NUM 8
+#define USING_THREE_PASS 0
+groupshared float4 gCache[2* MIPMAP_THREAD_NUM+1];
+
+static float Weights[3] = {
+  0.25,
+  0.5,
+  0.25
+};
+
+static float SampleBias[2] = {
+  -0.5,
+  0.5
+};
+
+uint GetCacheLoc(uint3 id)
+{
+	return id.x * MIPMAP_THREAD_NUM * MIPMAP_THREAD_NUM + id.y * MIPMAP_THREAD_NUM + id.z;
+}
+
+[numthreads(MIPMAP_THREAD_NUM, MIPMAP_THREAD_NUM, MIPMAP_THREAD_NUM)]
+void MipmapGeneration(uint3 groupId : SV_GroupThreadID,
+										uint3 dispatchId : SV_DispatchThreadID)
+{
+#if USING_THREE_PASS
+
+	float4 srcColor = MipmapSrc.Load(int4(2 * dispatchId, SrcMipLevel));
+	switch (MipmapDimension)
+	{
+	case 0: // x
+		float4 srcColor0 = MipmapSrc.Load(int4(2*dispatchId+ uint3(1, 0, 0), SrcMipLevel));
+		gCache[2* groupId.x] = srcColor;
+		gCache[2 * groupId.x+1] = srcColor0;
+		if (groupId.x >= MIPMAP_THREAD_NUM - 1)
+		{
+			gCache[2 * groupId.x + 2] = MipmapSrc.Load(int4(2 * dispatchId + uint3(2, 0, 0), SrcMipLevel));
+		}
+
+		GroupMemoryBarrierWithGroupSync();
+		MipmapDst[dispatchId] = gCache[2 * groupId.x] * 0.25 + 
+			gCache[2 * groupId.x + 1] * 0.5 + gCache[2 * groupId.x + 2] * 0.25;
+
+		break;
+	case 1: // y
+		float4 srcColor1 = MipmapSrc.Load(int4(2 * dispatchId + uint3(0, 1, 0), SrcMipLevel));
+		gCache[2 * groupId.y] = srcColor;
+		gCache[2 * groupId.y + 1] = srcColor1;
+		if (groupId.y >= MIPMAP_THREAD_NUM - 1)
+		{
+			gCache[2 * groupId.y + 2] = MipmapSrc.Load(int4(2 * dispatchId + uint3(0, 2, 0), SrcMipLevel));
+		}
+
+		GroupMemoryBarrierWithGroupSync();
+		MipmapDst[dispatchId] = gCache[2 * groupId.y] * 0.25 +
+			gCache[2 * groupId.y + 1] * 0.5 + gCache[2 * groupId.y + 2] * 0.25;
+
+		break;
+	case 2: // z
+		float4 srcColor2 = MipmapSrc.Load(int4(2 * dispatchId + uint3(0, 0, 1), SrcMipLevel));
+		gCache[2 * groupId.z] = srcColor;
+		gCache[2 * groupId.z + 1] = srcColor2;
+		if (groupId.z >= MIPMAP_THREAD_NUM - 1)
+		{
+			gCache[2 * groupId.z + 2] = MipmapSrc.Load(int4(2 * dispatchId + uint3(0, 0, 2), SrcMipLevel));
+		}
+
+		GroupMemoryBarrierWithGroupSync();
+		MipmapDst[dispatchId] = gCache[2 * groupId.z] * 0.25 +
+			gCache[2 * groupId.z + 1] * 0.5 + gCache[2 * groupId.z + 2] * 0.25;
+
+		break;
+	default:
+		break;
+	}
+	
+#else
+	
+	if (any(dispatchId >= DstRes)) return;
+
+	half4 color = 0.0;
+
+	[unroll]
+	for (uint i = 0; i < 2; ++i)
+	{
+		[unroll]
+		for (uint j = 0; j < 2; ++j)
+		{
+			[unroll]
+			for (uint k = 0; k < 2; ++k)
+			{
+				float4 sampled = MipmapSrc.Load(uint4(2 * dispatchId + uint3(i, j, k), SrcMipLevel));
+				color += 0.125 * sampled;
+			}
+		}
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	MipmapDst[dispatchId] = color;
+	
+#endif
+	
+}
+
+//********************************************************************************************************************************************************************
+// Copy Texture 3D.
+//********************************************************************************************************************************************************************
+
+uint CopyMipLevel;
+Texture3D<float4> TexSrc;
+RWTexture3D<float4> TexDst;
+
+[numthreads(8, 8, 8)]
+void CopyTexture3D(uint3 id : SV_DispatchThreadID)
+{
+	float4 sampled = TexSrc.Load(int4(id, CopyMipLevel));
+	TexDst[id.xyz] = sampled;
+}
+
+//********************************************************************************************************************************************************************
+// Calculate Voxel Direct Lighting.
+//********************************************************************************************************************************************************************
+
+float3 SunLightColor;
+float3 SunLightDir;
+float SunLightIntensity;
+float LightIndensityMulti = 1.0f;
+float EmissiveMulti = 1.0f;
+float4x4 gWorldToShadowVP;
+float ShadowSunBias;
+float ShadowNormalBias;
+RWTexture3D<half4> OutRadiance;
+
+[numthreads(4,4,4)]
+void VoxelDirectLighting(uint3 id : SV_DispatchThreadID)
+{
+	float3 voxelPos = float3(id)+float3(0.5f, 0.5f, 0.5f);
+	float3 worldPos = mul(VoxelToWorld, float4(voxelPos, 1.0f)).xyz;
+	float3 voxelIrradiance = 0.f;
+
+	float4 albedoAndOpacity = DecodeGbuffer(RWAlbedo[id.xyz]);
+	float3 albedo = albedoAndOpacity.xyz;
+	float4 normalAndEmissive = DecodeGbuffer(RWNormal[id.xyz]);
+	float3 normal = normalAndEmissive.xyz;
+	normal = (normal * 2.f) - float3(1.f, 1.f, 1.f);
+	// 方案A：Emissive强度存储在Normal.a（0~1），这里解压为0~5，发光颜色由Albedo承载
+	float emissiveIntensity = normalAndEmissive.w * 5.f;
+	float3 emissive = albedo * emissiveIntensity * EmissiveMulti;
+	float opacity = albedoAndOpacity.w;
+	// 旧版：使用独立Emissive/Opacity纹理
+	// float3 emissive = DecodeGbuffer(RWEmissive[id.xyz]).xyz;
+	// emissive = emissive * EmissiveMulti;
+	// float opacity = DecodeGbuffer(RWOpacity[id.xyz]).x;
+
+	// shadow
+#if ENABLE_SHADOW_NORMAL_BIAS
+	float3 shadowWorldPos = worldPos + normal * 0.5f * ShadowNormalBias * VoxelSize;
+	float4 shadowPos = mul(gWorldToShadowVP, float4(shadowWorldPos, 1.0f));
+#elif ENABLE_SHADOW_SUN_BIAS
+	float3 shadowWorldPos = worldPos - normalize(SunLightDir) * 0.5f * ShadowSunBias * VoxelSize;
+	float4 shadowPos = mul(gWorldToShadowVP, float4(shadowWorldPos, 1.0f));
+#else
+	float4 shadowPos = mul(gWorldToShadowVP, float4(worldPos, 1.f));
+#endif
+	shadowPos /= shadowPos.w;
+	// gWorldToShadowVP是OpenGL惯例的线性VP（不带反向Z，不带Y翻转）
+	// UV映射：NDC xy[-1,1] → UV[0,1]
+	// GPU渲染时renderIntoTexture=true翻转了Y，RT中UV.y=0对应NDC.y=-1（下方）
+	// 所以OpenGL NDC直接 *0.5+0.5 即可正确对应UV
+	float2 shadowUV = shadowPos.xy * float2(0.5f, 0.5f) + float2(0.5f, 0.5f);
+	// 反向深度[0,1]: near=1, far=0（与shadowmap一致：近处白，远处黑）
+	float shadowPosDepth = 1.0f - (shadowPos.z * 0.5f + 0.5f);
+	float shadow = 1.f;
+	float shadowDepth = ShadowDepth.SampleLevel(sampler_ShadowDepth, shadowUV, 0).x;
+	if (shadowPosDepth < shadowDepth)
+	{
+		shadow = 0.f;
+	}
+
+	float3 L = -SunLightDir;
+	float NdotL = max(dot(normal, L), 0.05f);
+	voxelIrradiance += NdotL * SunLightColor * SunLightIntensity * LightIndensityMulti * shadow;
+
+	voxelIrradiance *= albedo;
+
+	float3 resColor = voxelIrradiance + emissive;
+
+	OutRadiance[id.xyz] = float4(resColor, opacity);
+}
+
+//********************************************************************************************************************************************************************
+// Calculate Voxel Indirect Lighting.
+//********************************************************************************************************************************************************************
+
+SamplerState point_clamp_sampler;
+SamplerState linear_clamp_sampler;
+Texture3D<float4> VoxelLighting;
+RWTexture3D<half4> OutIndirectRadiance;
+float IndirectLightingMaxMipLevel;
+int IndirectLightingMaxStepNum;
+float IndirectLightingAlphaAtten;
+float IndirectLightingScale;
+float IndirectLightingConeAngle;
+float IndirectLightingFirstStep;
+float IndirectLightingStepScale;
+int IndirectLightingMinMipLevel;
+
+// 旧版通过硬编码宏固定为1根cone，保留注释便于回溯
+// #define INDIRECT_CONE_TRACE_LOW 0
+// #define INDIRECT_CONE_TRACE_VERY_LOW 1
+
+#if defined(INDIRECT_CONE_TRACE_HIGH)
+	#define CONE_COUNT 16
+	#define Fibonacci_Lattice_Hemisphere Fibonacci_Lattice_Hemisphere_16
+#elif defined(INDIRECT_CONE_TRACE_MID)
+	#define CONE_COUNT 8
+	#define Fibonacci_Lattice_Hemisphere Fibonacci_Lattice_Hemisphere_8
+#elif defined(INDIRECT_CONE_TRACE_LOW)
+	#define CONE_COUNT 4
+	#define Fibonacci_Lattice_Hemisphere Fibonacci_Lattice_Hemisphere_4
+#else
+	#define CONE_COUNT 1
+	#define Fibonacci_Lattice_Hemisphere Fibonacci_Lattice_Hemisphere_1
+#endif
+
+float CalcMipLevel(float size)
+{
+	return size <= 1.0 ? size : log2(size) + 1;
+}
+
+float TextureSDF(float3 position)
+{
+	position = .5f - abs(position - .5f);
+	return min(min(position.x, position.y), position.z);
+}
+
+float3 SquareToUniformHemisphere(float2 input)
+{
+	// theta = acos(1 - x), x is uniform from [0, 1],
+	// so (1 - x) is also uniform from [0, 1]
+	float cosTheta = input.x;
+	float phi = input.y * 3.14159265 * 2;
+	float r = sqrt(max(0.f, 1.f - cosTheta * cosTheta));
+	return float3(r * cos(phi), r * sin(phi), cosTheta);
+}
+
+float3 CalculateIndirectIrradiance(float3 voxelPos, float3 normal)
+{
+	if (TextureSDF(voxelPos / VoxelTextureResolution) < 0.0)
+	{
+		return float3(0.f, 0.f, 0.f);
+	}
+
+	normal = normalize(normal);
+	float3 origin = voxelPos / VoxelTextureResolution;
+
+	float3x3 TangentBasis = GetTangentBasis(normal);
+	float coneTan = tan(IndirectLightingConeAngle * 3.14159265f / 360.f);
+	float offset, sampleRadius, step, ndotl;
+	float3 coordinate, coneDir;
+	float4 coneColor, resultColor = float4(0.f, 0.f, 0.f, 0.f);
+	float weightSum = 0.f;
+	int coneIndex, stepNum;
+
+	for (coneIndex = 0; coneIndex < CONE_COUNT; ++coneIndex)
+	{
+		coneColor = float4(0.f, 0.f, 0.f, 0.f);
+		step = IndirectLightingFirstStep / VoxelTextureResolution;
+		offset = step;
+		sampleRadius = offset * coneTan;
+		coneDir = Fibonacci_Lattice_Hemisphere[coneIndex];
+		coneDir = normalize(mul(coneDir, TangentBasis));
+
+		coordinate = origin + offset * coneDir;
+		int stepNum = 0;
+		[loop]
+		while (coneColor.a < 0.95f && TextureSDF(coordinate) > 0.0f && stepNum <= IndirectLightingMaxStepNum)
+		{
+			float mip = clamp(CalcMipLevel(sampleRadius * VoxelTextureResolution), IndirectLightingMinMipLevel, IndirectLightingMaxMipLevel);
+			float4 sampledRadiance = VoxelLighting.SampleLevel(linear_clamp_sampler, coordinate, mip);
+			coneColor += (1.f - pow(coneColor.a, IndirectLightingAlphaAtten)) *  sampledRadiance;
+
+			step *= IndirectLightingStepScale;
+			offset += step;
+			sampleRadius = offset * coneTan;
+			coordinate = origin + offset * coneDir;
+			stepNum++;
+		}
+
+		ndotl = dot(coneDir, normal);
+		// 旧版：直接按ndotl累加，cone数量升高时会明显增亮
+		// resultColor += coneColor * ndotl;
+		float weight = max(ndotl, 0.f);
+		resultColor += coneColor * weight;
+		weightSum += weight;
+	}
+
+	// 旧版：return resultColor.xyz;
+	float safeWeightSum = max(weightSum, 1e-4f);
+	return resultColor.xyz / safeWeightSum;
+}
+
+[numthreads(8, 8, 8)]
+void VoxelIndirectLighting(uint3 id : SV_DispatchThreadID)
+{
+	float3 voxelPos = float3(id)+float3(0.5f, 0.5f, 0.5f);
+	float3 worldPos = mul(VoxelToWorld, float4(voxelPos, 1.0f)).xyz;
+	float3 voxelIrradiance = 0.f;
+
+	float4 albedoAndOpacity = DecodeGbuffer(RWAlbedo[id.xyz]);
+	float3 albedo = albedoAndOpacity.xyz;
+	float3 normal = DecodeGbuffer(RWNormal[id.xyz]).xyz;
+	normal = (normal * 2.f) - float3(1.f, 1.f, 1.f);
+	float opacity = albedoAndOpacity.w;
+	// 旧版：float opacity = DecodeGbuffer(RWOpacity[id.xyz]).x;
+
+	float3 directColor = VoxelLighting[id.xyz].xyz;
+
+	voxelIrradiance = CalculateIndirectIrradiance(voxelPos, normal);
+
+	float3 resultColor = directColor + voxelIrradiance * albedo * IndirectLightingScale;
+
+	OutIndirectRadiance[id.xyz] = float4(resultColor, opacity);
+}
+
+//********************************************************************************************************************************************************************
+// Bilateral Filtering.
+//********************************************************************************************************************************************************************
+
+Texture2D<float4> WholeIndirectLight;
+SamplerState sampler_WholeIndirectLight;
+// URP使用分离的深度和法线纹理
+// sampler2D _CameraDepthNormalsTexture;
+Texture2D<float4> _CameraDepthTexture;
+SamplerState sampler_CameraDepthTexture;
+Texture2D<float4> _CameraNormalsTexture;
+SamplerState sampler_CameraNormalsTexture;
+float4 ScreenResolution;
+float SampleRadius;
+float4 BilaterialThreshold;
+float NearClip;
+float FarClip;
+RWTexture2D<float4> OutBilateralFilter;
+
+#define DepthThresholdLowerBound BilaterialThreshold.x
+#define DepthThresholdUpperBound BilaterialThreshold.y
+#define NormalThresholdLowerBound BilaterialThreshold.z
+#define NormalThresholdUpperBound BilaterialThreshold.w
+
+#define BILATERAL_FILTER_MID 1
+
+#if BILATERAL_FILTER_LOW
+#define POISSION_SIZE 2
+#elif BILATERAL_FILTER_MID
+#define POISSION_SIZE 3
+#elif BILATERAL_FILTER_HIGH
+#define POISSION_SIZE 4
+#endif
+
+// URP深度线性化：将非线性深度转换为线性视图空间深度
+float LinearEyeDepthFromZBuffer(float rawDepth)
+{
+	return 1.0 / (_ZBufferParams.z * rawDepth + _ZBufferParams.w);
+}
+
+// URP法线纹理直接存储世界空间法线（[0,1]编码），直接解码即可
+void SampleDepthAndNormal(float2 uv, out float depth, out float3 normal)
+{
+	float rawDepth = _CameraDepthTexture.SampleLevel(sampler_CameraDepthTexture, uv, 0).r;
+	depth = LinearEyeDepthFromZBuffer(rawDepth);
+	// _CameraNormalsTexture在URP(R8G8B8A8_SNorm)中直接存储了[-1,1]的view space或world space法线
+	// 无需再做 * 2.0 - 1.0 的映射
+	normal = _CameraNormalsTexture.SampleLevel(sampler_CameraNormalsTexture, uv, 0).rgb;
+}
+
+[numthreads(8, 8, 1)]
+void BilateralFiltering(uint3 id : SV_DispatchThreadID)
+{
+	float2 uv = (id.xy + 0.5f)*ScreenResolution.zw;
+
+	float3 centerNormal;
+	float centerDepth;
+	SampleDepthAndNormal(uv, centerDepth, centerNormal);
+
+	float4 color = WholeIndirectLight.SampleLevel(sampler_WholeIndirectLight, uv, 0);
+	float totalWeight = 1.f;
+	float SampleNum = PoissonStartAndEnd[POISSION_SIZE].y - PoissonStartAndEnd[POISSION_SIZE].x;
+	for (int i = PoissonStartAndEnd[POISSION_SIZE].x; i < PoissonStartAndEnd[POISSION_SIZE].y; ++i)
+	{
+		float2 deltUv = PoissonDisk[i] * SampleRadius * ScreenResolution.zw;
+		float3 sampledNormal;
+		float sampledDepth;
+		SampleDepthAndNormal(uv + deltUv, sampledDepth, sampledNormal);
+
+		float weight = 1.f - saturate((abs(sampledDepth - centerDepth) - DepthThresholdLowerBound)
+			/ (DepthThresholdUpperBound - DepthThresholdLowerBound));
+		weight *= saturate((dot(sampledNormal, centerNormal) - NormalThresholdLowerBound)
+			/ (NormalThresholdUpperBound - NormalThresholdLowerBound));
+
+		float4 sampled = WholeIndirectLight.SampleLevel(sampler_WholeIndirectLight, uv + deltUv, 0);
+		color += sampled * weight;
+		totalWeight += weight;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	OutBilateralFilter[id.xy] = float4(color.xyz / totalWeight, 1.f);
+}

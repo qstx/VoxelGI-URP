@@ -1,0 +1,127 @@
+# Code Editor Package for Visual Studio
+
+## [1.0.14] - 2026-03-10
+Fix:
+- Fixed zed open the workspace for the first time failed to recognize the file as a workspace file
+
+## [1.0.13] - 2026-03-10
+Feature:
+- Add Zed editor support and fix Windows app discovery
+
+## [1.0.12] - 2026-03-04
+Merged the following changes from upstream:
+
+Internal:
+- Fixes for release validation and release process.
+
+Integration:
+- Fix Visual Studio Integration to properly wait for the solution to be opened.
+- Fix handling of asset-pipeline refresh-mode setting.
+- Remove support for `Visual Studio for Mac`. Please use `VS Code` going forward.
+- Performance optimizations.
+
+Project generation:
+- Disable Workspace-based development feature in `settings.json`.
+- Ensure that we only have one `sln` or `slnx` file at a time.
+- Properly handle filenames with special characters in `link` tags.
+- Add `EnableOnDemandExcludedFolderLoading` capability when generating SDK-Style project.
+- Allow customization of `langversion` when using a `rsp` file.
+- Move to `slnx` solution generation when using `SDK-Style` projects.
+- Both `VS Code` and `Visual Studio 2026` are now using `SDK-Style` projects by default.
+
+## [1.0.11] - 2026-03-04
+Feature:
+- Added support for Google Antigravity IDE
+- Added VSCodium support
+- Added configurations for Trae CN and Lingma
+
+Fix:
+- Replaced `FileInfo.LinkTarget` with libc `realpath()` for .NET Standard 2.1 compatibility
+
+## [1.0.10] - 2025-08-07
+Feature:
+- Improved compile error handling and messaging, using compilation pipeline API instead of log message events to get compile errors, which is more reliable, and compile errors are sent immediately after compilation finishes
+- Automatically removes USS-CSS association in `settings.json` when `Unity Code Pro` extension is installed, since we have native USS language server support
+- Added file-based logger for debugging
+
+## [1.0.9] - 2025-7-27
+Feature:
+- Added fuzzy test name matching support - append '?' to test filters to enable fuzzy matching using "ends with" comparison
+
+Improved:
+- Implemented test list caching per TestMode for improved performance and reduced API calls
+- Added callback-based test list retrieval to send responses only to requesting clients instead of broadcasting to all connected clients
+
+## [1.0.8] - 2025-7-25
+Removed:
+- Removed UXML schema catalog generation and XML validation features due to compatibility issues with the Red Hat XML extension for UXML files
+- Removed CreateUxmlSchemaCatalog method and related XML catalog configuration
+- Removed Red Hat XML extension recommendation from VS Code extensions
+
+## [1.0.7] - 2025-7-25
+Feature:
+- Added CompileErrors message type (106) for collecting and retrieving Unity compilation errors
+- Added Log class for JSON serialization of compile error information with Unix timestamp support
+- Implemented automatic compile error collection within 1-second window after compilation finishes
+- Added filtering for "error CS" messages to capture C# compilation errors specifically
+
+## [1.0.6] - 2025-07-22
+Feature:
+- Added HasChildren property to TestAdaptor for better test hierarchy information
+- Added compilation started notification (CompilationStarted message type) to provide complete compilation lifecycle visibility
+
+Improved:
+- Enhanced refresh protocol with client notification system - clients now receive confirmation when refresh operations complete
+- Simplified asset refresh logic by removing unnecessary autoRefreshMode check for explicit refresh requests
+- Better error handling in messaging protocol for refresh operations
+
+## [1.0.5] - 2025-07-21
+Feature:
+- Added UXML validation and auto-completion support for Red Hat XML extension. Automatically generates XML catalog files and configures VS Code settings when the Red Hat XML extension is installed and UIElementsSchema directory exists.
+
+Changed:
+- USS files are no longer automatically associated with CSS to allow for our native USS language server support. 
+
+## [1.0.4] - 2025-07-08
+Fix:
+- Changed `com.unity.test-framework` package to version `1.4.6` because some people may be using older versions of test framework, the new version `1.5.1` may not appear existing for some people, that can be a Unity version problem.
+
+## [1.0.2] - 2025-07-05
+Fix:
+- Changed extesion id to `hackerzhuli.unity-code-pro` to match the new id on the marketplace.
+
+## [1.0.1] - 2025-07-05
+
+Documentation:
+- Updated package description for clarity
+
+Build:
+- Updated dependencies to latest versions
+
+Code Improvement:
+- Removed unneeded copyright headers from files written from scratch
+- Improved analyzer discovery from extensions in CodeInstallation
+- Restructured GetAnalyzers method to support multiple extensions and avoid duplicate analyzer DLLs
+
+## [1.0.0] - 2025-7-3
+
+**Note:** This version represents a restart of the package versioning as this is now released as a new package `com.hackerzhuli.code` (previously `com.unity.ide.visualstudio`).
+
+Integration:
+
+- Added support for popular VS Code forks including Cursor Windsurf and Trae.
+- Added support for Dot Rush extesion for VS Code, automatically add needed setting and launch options
+- Added support for Unity Code extension for VS Code, automatically add launch options
+
+Messaging Protocol:
+- Improved existing messages (eg. testing related messages) to for better performance, and integration with external IDE
+- Added new messages (eg. CompilationFinished, IsPlaying) for better development experience in external IDE
+- Added MessagingProtocol documentation for easier development of external IDE extensions.
+
+Code Improvement:
+- Improve some code with better structure and documentation
+- Changed VisualStudioIntegration core logic into a ScriptableObject CodeEditorIntegrationCore, to make code less error prone and make use of Unity lifecycle events and automatic state preservation through serialization and deserialization
+- Improve code quality for some classes(eg. CodeEditorIntegrationCore) by making it single threaded to avoid problems.
+  
+Removed:
+- Removed support for Visual Studio
