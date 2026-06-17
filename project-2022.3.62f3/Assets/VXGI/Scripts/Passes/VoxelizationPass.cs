@@ -151,7 +151,6 @@ public class VoxelizationPass : ScriptableRenderPass
         m_Feature.Resources.ShadowVPMatrix = shadowVPLinear;
 
         // 提交设置命令
-        cmd.BeginSample("ShadowMap");
         cmd.SetRenderTarget(m_Feature.Resources.ShadowDepth);
         cmd.ClearRenderTarget(false, true, Color.black);
         cmd.SetGlobalMatrix("WorldToShadowVP", shadowVP);
@@ -182,7 +181,6 @@ public class VoxelizationPass : ScriptableRenderPass
         context.DrawRenderers(renderingData.cullResults, ref drawSettings, ref filterSettings);
         VoxelGIProfiler.EndSample("    DrawRenderers_Shadow");
 
-        cmd.EndSample("ShadowMap");
         context.ExecuteCommandBuffer(cmd);
         cmd.Clear();
 
@@ -239,7 +237,6 @@ public class VoxelizationPass : ScriptableRenderPass
         int voxelRes = m_Feature.VoxelizationCfg.VoxelTextureResolution;
 
         VoxelGIProfiler.BeginSample("  Voxelize");
-        cmd.BeginSample("Voxelize");
 
         cmd.SetRenderTarget(res.UavAlbedo, 0, CubemapFace.Unknown, -1);
         cmd.ClearRenderTarget(true, true, Color.black);
@@ -320,7 +317,6 @@ public class VoxelizationPass : ScriptableRenderPass
         VoxelGIProfiler.EndSample("    DrawRenderers_Voxel");
 
         cmd.ClearRandomWriteTargets();
-        cmd.EndSample("Voxelize");
         VoxelGIProfiler.EndSample("  Voxelize");
 
         cmd.BeginSample("OverwritePackedAlpha");

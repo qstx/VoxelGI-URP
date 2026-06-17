@@ -58,7 +58,7 @@ public class CombinePass : ScriptableRenderPass
         Camera camera = renderingData.cameraData.camera;
         var res = m_Feature.Resources;
         var debugCfg = m_Feature.DebugCfg;
-        var colorTarget = renderingData.cameraData.renderer.cameraColorTarget;
+        var colorTarget = renderingData.cameraData.renderer.cameraColorTargetHandle;
 
         CommandBuffer cmd = CommandBufferPool.Get(debugCfg.DebugMode ? "VoxelGI/Debug" : "VoxelGI/Combine");
         cmd.Clear();
@@ -79,7 +79,7 @@ public class CombinePass : ScriptableRenderPass
         VoxelGIProfiler.OnFrameEnd();
     }
 
-    void RenderNormalCombine(CommandBuffer cmd, Camera camera, RenderTargetIdentifier colorTarget)
+    void RenderNormalCombine(CommandBuffer cmd, Camera camera, RTHandle colorTarget)
     {
         var res = m_Feature.Resources;
         var history = m_Feature.GetTemporalHistory(camera);
@@ -102,7 +102,7 @@ public class CombinePass : ScriptableRenderPass
         RenderTexture.ReleaseTemporary(sceneDirectCopy);
     }
 
-    void RenderDebug(CommandBuffer cmd, Camera camera, RenderTargetIdentifier colorTarget)
+    void RenderDebug(CommandBuffer cmd, Camera camera, RTHandle colorTarget)
     {
         var res = m_Feature.Resources;
         var debugCfg = m_Feature.DebugCfg;
